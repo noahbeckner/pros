@@ -186,13 +186,13 @@ int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
 	lcd_print(2,"No errors yet!");
 	task_delay(1000);
 	if(threads_mut == NULL) {
-		lcd_print(2,"Big chunky Error!");
+		lcd_print(2,"Error!");
 		task_delay(1000);
 	}
   if(sem_wait(threads_mut, portMAX_DELAY) != pdTRUE) {
     kfree(pthread);
     kfree(task_arg);
-    task_delete(task);  //cancels thread?
+    task_delete(task);
     return EAGAIN;
   }
 
