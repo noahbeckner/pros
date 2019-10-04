@@ -25,9 +25,10 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
-//#include "kapi.h"
+/*#include "kapi.h"*/
 #include "rtos/FreeRTOS.h"
 #include "rtos/list.h"
 #include "rtos/semphr.h"
@@ -67,6 +68,11 @@ static static_sem_s_t threads_mut_buf;
 static List_t threads_list;
 
 // static int pthread_mutex_lock(rtos_pthread_mutex* mut, uint32_t tmo);
+
+void debug(int code, const char* msg) {
+  lcd_print(code, msg);
+  task_delay(1000);
+}
 
 void rtos_pthread_init() {
   vListInitialise(&threads_list);
@@ -130,7 +136,7 @@ void pthread_task_fn(void* _arg) {
     // TODO: error out
   }
 
-  struct rtos_pthread* pthread = rtos_pthread_find(CURRENT_TASK);
+  struct rtos_pthread* pthread = rtos_pthread_find(task_get_current());
   if(pthread->detached) {
     rtos_pthread_delete(pthread);
   } else {
@@ -147,6 +153,7 @@ void pthread_task_fn(void* _arg) {
 
 int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
                    void* (start_routine)(void*), void* arg) {
+  rtos_pthread_init();  //Need to think thonk a bit about this
   if(attr) {
     return ENOSYS;
   }
@@ -172,7 +179,6 @@ int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
     return EAGAIN;
   }
 
-
   vListInitialiseItem(&pthread->list_item);
   listSET_LIST_ITEM_OWNER(&pthread->list_item, pthread);
   listSET_LIST_ITEM_VALUE(&pthread->list_item, (uint32_t)task);
@@ -180,13 +186,13 @@ int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
 	lcd_print(2,"No errors yet!");
 	task_delay(1000);
 	if(threads_mut == NULL) {
-		lcd_print(2,"Error!");
+		lcd_print(2,"Big chunky Error!");
 		task_delay(1000);
 	}
   if(sem_wait(threads_mut, portMAX_DELAY) != pdTRUE) {
     kfree(pthread);
     kfree(task_arg);
-    task_delete(task);
+    task_delete(task);  //cancels thread?
     return EAGAIN;
   }
 
@@ -195,6 +201,7 @@ int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
   sem_post(threads_mut);
 
   task_notify_ext(task, 0, E_NOTIFY_ACTION_NONE, NULL);
+  debug(2, "Task notified");
 
   *thread = (pthread_t)pthread;
 
@@ -214,15 +221,16 @@ int pthread_join(pthread_t thread, void** retval) {
     ret = ESRCH;
   } else if(pthread->join_handle) {
     ret = EINVAL;
-  } else if(task == xTaskGetCurrentTaskHandle()) {
+  } else if(task == task_get_current()) {
+    //xTaskGetCurrentTaskHandle
     ret = EDEADLK;
   } else {
-    struct rtos_pthread* cur_pthread = rtos_pthread_find(xTaskGetCurrentTaskHandle());
+    struct rtos_pthread* cur_pthread = rtos_pthread_find(task_get_current());
     if(cur_pthread && cur_pthread->join_handle == task) {
       ret = EDEADLK;
     } else {
       if(pthread->state &= RTOS_PTHREAD_STATE_RUN) {
-        pthread->join_handle = xTaskGetCurrentTaskHandle();
+        pthread->join_handle = task_get_current();
         wait = true;
       } else {
         rtos_pthread_delete(pthread);
@@ -280,7 +288,7 @@ pthread_t pthread_self() {
     errno = EAGAIN;
     return EAGAIN;
   }
-  struct rtos_pthread* pthread = rtos_pthread_find(xTaskGetCurrentTaskHandle());
+  struct rtos_pthread* pthread = rtos_pthread_find(task_get_current());
   sem_post(threads_mut);
   if(!pthread) {
     errno = EINVAL;
