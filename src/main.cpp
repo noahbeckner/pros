@@ -83,6 +83,11 @@ void *inc_x(void *x_void_ptr)
 
 	pros::lcd::print(2,"x increment finished, %d\n", *x_ptr);
 
+  Delay to test pthread_join functionality
+  pros::delay(5000);
+  pros::lcd::print(4,"delay F I N I S H E D");
+  pros::delay(2000);
+
 	/* the function must return something - NULL will do */
 	return NULL;
 }
@@ -123,6 +128,7 @@ void opcontrol() {
 		pros::lcd::print(1,"y increment finished\n");
 		pros::delay(1000);
 
+    //pros::delay(8000);
 		/* wait for the second thread to finish */
 		if(pthread_join(inc_x_thread, NULL)) {
 			pros::lcd::print(3, "Error joining thread\n");

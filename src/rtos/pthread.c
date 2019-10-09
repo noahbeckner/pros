@@ -125,6 +125,7 @@ static void rtos_pthread_delete(struct rtos_pthread* pthread) {
 void pthread_task_fn(void* _arg) {
   struct rtos_pthread_task_arg* arg = (struct rtos_pthread_task_arg*)_arg;
 
+  //wait for parent pthread_create to finish it's stuff....
   task_notify_wait(0, 0, NULL, portMAX_DELAY);
 
   arg->fn(arg->arg);
@@ -141,6 +142,9 @@ void pthread_task_fn(void* _arg) {
     rtos_pthread_delete(pthread);
   } else {
     if(pthread->join_handle) {
+      //if this thread has a task that it needs to join to, 
+      //send a notification to that task to indicate that this task
+      //is done
       task_notify_ext(pthread->join_handle, 0, E_NOTIFY_ACTION_NONE, NULL);
     } else {
       pthread->state = RTOS_PTHREAD_STATE_EXITED;
@@ -148,7 +152,7 @@ void pthread_task_fn(void* _arg) {
   }
   sem_post(threads_mut);
 
-  task_delete(NULL);
+  task_delete(NULL);  //NULL deletes current task
 }
 
 int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
@@ -200,8 +204,10 @@ int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
 
   sem_post(threads_mut);
 
+  //notify task to break wait in pthread_task_fn
   task_notify_ext(task, 0, E_NOTIFY_ACTION_NONE, NULL);
-  debug(2, "Task notified");
+  //Set pthread run state
+  pthread->state = RTOS_PTHREAD_STATE_RUN; 
 
   *thread = (pthread_t)pthread;
 
@@ -217,19 +223,24 @@ int pthread_join(pthread_t thread, void** retval) {
     ret = EAGAIN;
   }
   task_t task = rtos_pthread_find_handle(thread);
+  //TODO: Add detached condition?
   if(!task) {
+    //task not found
     ret = ESRCH;
   } else if(pthread->join_handle) {
+    //thread already set to join another thread
     ret = EINVAL;
   } else if(task == task_get_current()) {
-    //xTaskGetCurrentTaskHandle
+    //can't join self
     ret = EDEADLK;
   } else {
     struct rtos_pthread* cur_pthread = rtos_pthread_find(task_get_current());
     if(cur_pthread && cur_pthread->join_handle == task) {
+      //join to each other is pretty dumb
       ret = EDEADLK;
     } else {
-      if(pthread->state &= RTOS_PTHREAD_STATE_RUN) {
+      if(pthread->state == RTOS_PTHREAD_STATE_RUN) {
+        //pthread is currently running
         pthread->join_handle = task_get_current();
         wait = true;
       } else {
@@ -240,6 +251,8 @@ int pthread_join(pthread_t thread, void** retval) {
   sem_post(threads_mut);
 
   if(ret == 0 && wait) {
+    //blocks this task until joining task sends a notification
+    //see: pthread_task_fn
     task_notify_wait(0, 0, NULL, portMAX_DELAY);
     if(sem_wait(threads_mut, portMAX_DELAY) != pdTRUE) {
       errno = ENOMSG;
