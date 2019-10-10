@@ -26,6 +26,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 /*#include "kapi.h"*/
@@ -35,7 +36,6 @@
 #include "rtos/task.h"
 #include "pros/llemu.h"
 //#include "system/system.h"
-
 
 
 #define RTOS_PTHREAD_STATE_EXITED       (1 << 1)
@@ -131,28 +131,8 @@ void pthread_task_fn(void* _arg) {
   arg->fn(arg->arg);
 
   kfree(arg);
-
-  if(sem_wait(threads_mut, portMAX_DELAY) != pdTRUE) {
-    return; // failed to lock threads list
-    // TODO: error out
-  }
-
-  struct rtos_pthread* pthread = rtos_pthread_find(task_get_current());
-  if(pthread->detached) {
-    rtos_pthread_delete(pthread);
-  } else {
-    if(pthread->join_handle) {
-      //if this thread has a task that it needs to join to, 
-      //send a notification to that task to indicate that this task
-      //is done
-      task_notify_ext(pthread->join_handle, 0, E_NOTIFY_ACTION_NONE, NULL);
-    } else {
-      pthread->state = RTOS_PTHREAD_STATE_EXITED;
-    }
-  }
-  sem_post(threads_mut);
-
-  task_delete(NULL);  //NULL deletes current task
+  
+  pthread_exit(NULL); //stubbed retval for now
 }
 
 int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
@@ -209,7 +189,6 @@ int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
   pthread->state = RTOS_PTHREAD_STATE_RUN; 
 
   *thread = (pthread_t)pthread;
-
   return 0;
 }
 
@@ -229,7 +208,11 @@ int pthread_join(pthread_t thread, void** retval) {
   } else if(pthread->join_handle) {
     //thread already set to join another thread
     ret = EINVAL;
-  } else if(task == task_get_current()) {
+  } else if(pthread->detached) {
+    //if thread is already detached
+    ret = EINVAL;
+  }
+  else if(task == task_get_current()) {
     //can't join self
     ret = EDEADLK;
   } else {
@@ -249,16 +232,19 @@ int pthread_join(pthread_t thread, void** retval) {
   }
   sem_post(threads_mut);
 
-  if(ret == 0 && wait) {
+  if(ret == 0) {
     //blocks this task until joining task sends a notification
     //see: pthread_task_fn
-    task_notify_wait(0, 0, NULL, portMAX_DELAY);
-    if(sem_wait(threads_mut, portMAX_DELAY) != pdTRUE) {
-      errno = ENOMSG;
-      return ENOMSG;
+    if(wait) {
+      task_notify_wait(0, 0, NULL, portMAX_DELAY);
+      if(sem_wait(threads_mut, portMAX_DELAY) != pdTRUE) {
+        errno = ENOMSG;
+        return ENOMSG;
+      }
+      rtos_pthread_delete(pthread);
+      sem_post(threads_mut);
     }
-    rtos_pthread_delete(pthread);
-    sem_post(threads_mut);
+    task_delete(task);
   }
 
   if(retval) {
@@ -268,13 +254,12 @@ int pthread_join(pthread_t thread, void** retval) {
   return ret;
 }
 
-
 int pthread_detach(pthread_t thread) {
+  printf("Detaching thread!\n");
   struct rtos_pthread* pthread = (struct rtos_pthread*)thread;
   int ret = 0;
 
   if(sem_wait(threads_mut, portMAX_DELAY) != pdTRUE) {
-    errno = EAGAIN;
     errno = ENOMSG;
     return EAGAIN;
   }
@@ -283,11 +268,80 @@ int pthread_detach(pthread_t thread) {
   if(!task) {
     errno = ESRCH;
     ret = ESRCH;
-  } else {
+  } 
+  else if(pthread->detached) {
+    //already detached
+    errno = EINVAL;
+    ret = EINVAL;
+  }
+  else if(pthread->join_handle) {
+    //already waiting to join some other thread
+    errno = EINVAL;
+    ret = EINVAL;
+  }
+  else if(pthread->state == RTOS_PTHREAD_STATE_RUN) {
+    //if thread is currently running
+    printf("Detached successfully\n");
     pthread->detached = true;
+  }
+  else {
+    //if thread has already finished running, release sys-resource 
+    rtos_pthread_delete(pthread);
+    task_delete(task);
   }
   sem_post(threads_mut);
   return ret;
+}
+
+void pthread_exit(void* ret_val) {
+  bool detached = false; 
+
+  if(sem_wait(threads_mut, portMAX_DELAY) != pdTRUE) {
+    errno = ENOMSG;
+  }
+  else {  //require this wierdness because func is noreturn
+    struct rtos_pthread* pthread = rtos_pthread_find(task_get_current());
+    bool valid = false;
+    if(!pthread) {
+      errno = ESRCH;
+    }
+    else if(pthread->state == RTOS_PTHREAD_STATE_EXITED) {
+      errno = EINVAL;
+    }
+    else if(pthread->detached) {
+      //if pthread is detached
+      printf("Exited detached thread properly\n");
+      rtos_pthread_delete(pthread);
+      detached = true;
+      valid = true;
+    }
+    else {
+      //if pthread is not detached
+      //retval stuff goes here eventually
+      valid = true; 
+      if(pthread->join_handle) {
+        //if a join_handle exists
+        //notify to join
+        task_notify_ext(pthread->join_handle, 0, E_NOTIFY_ACTION_NONE, NULL);
+      }
+      else {
+        pthread->state = RTOS_PTHREAD_STATE_EXITED;
+      }
+    }
+    sem_post(threads_mut);
+    
+    if(valid) {
+      if(detached) {
+        task_delete(NULL);  //NULL deletes current task
+      }
+      else {
+        task_suspend(NULL);
+      }
+
+      printf("If the program reaches this, something broke horribly\n");
+    }
+  }
+  exit(1);
 }
 
 int phread_cancel(pthread_t pthread) {

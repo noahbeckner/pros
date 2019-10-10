@@ -118,6 +118,7 @@ void opcontrol() {
 			pros::lcd::print(1, "Error creating thread\n");
 			pros::delay(1000);
 		}
+    pthread_detach(inc_x_thread);
 
     pros::lcd::print(2, "Thread exec worked just fine");
     pros::delay(1000);
@@ -129,9 +130,9 @@ void opcontrol() {
 
     //pros::delay(8000);
 		/* wait for the second thread to finish */
-		if(pthread_join(inc_x_thread, NULL)) {
-			pros::lcd::print(3, "Error joining thread\n");
-		}
+		//if(pthread_join(inc_x_thread, NULL)) {
+			//pros::lcd::print(3, "Error joining thread\n");
+		//}
 
 		/* show the results - x is now 100 thanks to the second thread */
 		pros::lcd::print(4,"x: %d, y: %d\n", x, y);
