@@ -83,7 +83,7 @@ void *inc_x(void *x_void_ptr)
 
 	pros::lcd::print(2,"x increment finished, %d\n", *x_ptr);
 
-  Delay to test pthread_join functionality
+  //Delay to test pthread_join functionality
   pros::delay(5000);
   pros::lcd::print(4,"delay F I N I S H E D");
   pros::delay(2000);
@@ -115,11 +115,10 @@ void opcontrol() {
 
 		/* create a second thread which executes inc_x(&x) */
 		if(pthread_create(&inc_x_thread, NULL, inc_x, (void*) &x)) {
-
 			pros::lcd::print(1, "Error creating thread\n");
 			pros::delay(1000);
-
 		}
+
     pros::lcd::print(2, "Thread exec worked just fine");
     pros::delay(1000);
 		/* increment y to 100 in the first thread */

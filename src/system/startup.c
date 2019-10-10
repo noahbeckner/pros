@@ -19,6 +19,7 @@
 #include "v5_api.h"
 
 extern void rtos_initialize();
+extern void rtos_pthread_init();
 extern void vfs_initialize();
 extern void system_daemon_initialize();
 // extern void graphical_context_daemon_initialize(void);
@@ -41,6 +42,8 @@ __attribute__((constructor(101))) static void pros_init(void) {
 	vdml_initialize();
 
 	display_initialize();
+
+  rtos_pthread_init(); 
 
 	// NOTE: this function should be called after all other initialize
 	// functions. for an example of what could happen if this is not

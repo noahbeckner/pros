@@ -157,7 +157,6 @@ void pthread_task_fn(void* _arg) {
 
 int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
                    void* (start_routine)(void*), void* arg) {
-  rtos_pthread_init();  //Need to think thonk a bit about this
   if(attr) {
     return ENOSYS;
   }
