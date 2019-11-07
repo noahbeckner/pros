@@ -49,10 +49,11 @@ struct rtos_pthread {
   task_t  join_handle;
   uint16_t state;
   uint8_t detached;
+  void *retval;
 };
 
 struct rtos_pthread_task_arg {
-  task_fn_t fn;
+  void* (*fn)(void*);
   void* arg;
 };
 
@@ -124,15 +125,15 @@ static void rtos_pthread_delete(struct rtos_pthread* pthread) {
 
 void pthread_task_fn(void* _arg) {
   struct rtos_pthread_task_arg* arg = (struct rtos_pthread_task_arg*)_arg;
-
+  void* rval = NULL;
   //wait for parent pthread_create to finish it's stuff....
   task_notify_wait(0, 0, NULL, portMAX_DELAY);
 
-  arg->fn(arg->arg);
+  rval = arg->fn(arg->arg);
 
   kfree(arg);
   
-  pthread_exit(NULL); //stubbed retval for now
+  pthread_exit(rval); //stubbed retval for now
 }
 
 int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
@@ -153,9 +154,18 @@ int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
   }
   memset(pthread, 0, sizeof(*pthread));
 
-  task_arg->fn = (task_fn_t)start_routine;
+  task_arg->fn = (void* (*)(void*))start_routine;
   task_arg->arg = arg;
-  task_t task = task_create(&pthread_task_fn, task_arg, TASK_PRIORITY_DEFAULT, TASK_STACK_DEPTH_DEFAULT, "pthread");
+
+  uint32_t stack_size = TASK_STACK_DEPTH_DEFAULT;
+  uint32_t prio = TASK_PRIORITY_DEFAULT;
+
+  /*if(attr) {*/
+    /*stack_size = attr->stack_size; */
+     
+  /*}*/
+
+  task_t task = task_create(&pthread_task_fn, task_arg, prio, stack_size, "pthread");
   if(task == NULL) {
     kfree(pthread);
     kfree(task_arg);
@@ -166,8 +176,6 @@ int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
   listSET_LIST_ITEM_OWNER(&pthread->list_item, pthread);
   listSET_LIST_ITEM_VALUE(&pthread->list_item, (uint32_t)task);
 
-	lcd_print(2,"No errors yet!");
-	task_delay(1000);
 	if(threads_mut == NULL) {
 		lcd_print(2,"Error!");
 		task_delay(1000);
@@ -196,6 +204,7 @@ int pthread_join(pthread_t thread, void** retval) {
   struct rtos_pthread* pthread = (struct rtos_pthread*)thread;
   int ret = 0;
   bool wait = false;
+  void* task_retval = NULL;
 
   if(sem_wait(threads_mut, portMAX_DELAY) != pdTRUE) {
     ret = EAGAIN;
@@ -226,6 +235,7 @@ int pthread_join(pthread_t thread, void** retval) {
         pthread->join_handle = task_get_current();
         wait = true;
       } else {
+        task_retval = pthread->retval;
         rtos_pthread_delete(pthread);
       }
     }
@@ -241,6 +251,7 @@ int pthread_join(pthread_t thread, void** retval) {
         errno = ENOMSG;
         return ENOMSG;
       }
+      task_retval = pthread->retval;
       rtos_pthread_delete(pthread);
       sem_post(threads_mut);
     }
@@ -248,7 +259,7 @@ int pthread_join(pthread_t thread, void** retval) {
   }
 
   if(retval) {
-    *retval = 0;
+    *retval = task_retval;
   }
 
   return ret;
@@ -318,6 +329,7 @@ void pthread_exit(void* ret_val) {
     else {
       //if pthread is not detached
       //retval stuff goes here eventually
+      pthread->retval = ret_val;
       valid = true; 
       if(pthread->join_handle) {
         //if a join_handle exists
@@ -335,6 +347,7 @@ void pthread_exit(void* ret_val) {
         task_delete(NULL);  //NULL deletes current task
       }
       else {
+        //If task isn't detached, suspend until join cleans
         task_suspend(NULL);
       }
 

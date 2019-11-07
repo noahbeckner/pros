@@ -75,21 +75,18 @@ void autonomous() {}
  * task, not resume it from where it left off.
  */
 
-void *inc_x(void *x_void_ptr)
+void* inc_x(void* inp)
 {
 	/* increment x to 100 */
-	int *x_ptr = (int *)x_void_ptr;
-	while(++(*x_ptr) < 100);
-
-	pros::lcd::print(2,"x increment finished, %d\n", *x_ptr);
-
-  //Delay to test pthread_join functionality
-  pros::delay(5000);
-  pros::lcd::print(4,"delay F I N I S H E D");
-  pros::delay(2000);
-
 	/* the function must return something - NULL will do */
-	return NULL;
+  int* x = (int*) malloc(sizeof(int));
+  int y = 0;
+
+  while(++y != 100);
+
+  *x = y;
+
+	return (void*) x;
 }
 
 void opcontrol() {
@@ -98,64 +95,23 @@ void opcontrol() {
 	pros::Controller master(pros::E_CONTROLLER_MASTER);
 	pros::Motor left_mtr(1);
 	pros::Motor right_mtr(2);
-	int x = 0;
-	int y = 0;
 
 	while (true) {
+    pthread_t t;
+    pros::lcd::print(1, "Starting thread");
+    int x = 0;
+    pthread_create(&t, NULL, inc_x, NULL);
 
-		/* show the initial values of x and y */
-		pros::lcd::print(0,"x: %d, y: %d\n", x, y);
-		pros::delay(1000);
+    pros::lcd::print(2, "Starting x count");
+    while(++x != 10); 
 
-		/* this variable is our reference to the second thread */
-		pthread_t inc_x_thread;
-		pros::delay(1000);
-		pros::lcd::print(1,"Thread variable created");
-		pros::delay(1000);
-
-		/* create a second thread which executes inc_x(&x) */
-		if(pthread_create(&inc_x_thread, NULL, inc_x, (void*) &x)) {
-			pros::lcd::print(1, "Error creating thread\n");
-			pros::delay(1000);
-		}
-    pthread_detach(inc_x_thread);
-
-    pros::lcd::print(2, "Thread exec worked just fine");
-    pros::delay(1000);
-		/* increment y to 100 in the first thread */
-		while(++y < 100);
-
-		pros::lcd::print(1,"y increment finished\n");
-		pros::delay(1000);
-
-    //pros::delay(8000);
-		/* wait for the second thread to finish */
-		//if(pthread_join(inc_x_thread, NULL)) {
-			//pros::lcd::print(3, "Error joining thread\n");
-		//}
-
-		/* show the results - x is now 100 thanks to the second thread */
-		pros::lcd::print(4,"x: %d, y: %d\n", x, y);
+    int* result;
+    pros::lcd::print(3, "Joining thread");
+    pthread_join(t, (void**)&result); 
+    pros::lcd::print(4, "x: %d, y = %d", x, *result);
 
 		pros::delay(20);
     break;
 	}
   pros::lcd::print(5, "Program ending...");
-  //opcontrol();
-  //pros::Controller master(pros::E_CONTROLLER_MASTER);
-  //pros::Motor left_mtr(1);
-  //pros::Motor right_mtr(2);
-  //pros::lcd::print(1, "Henlo world!");
-
-  //while (true) {
-    //pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
-                     //(pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
-                     //(pros::lcd::read_buttons() & LCD_BTN_RIGHT) >> 0);
-    //int left = master.get_analog(ANALOG_LEFT_Y);
-    //int right = master.get_analog(ANALOG_RIGHT_Y);
-
-    //left_mtr = left;
-    //right_mtr = right;
-    //pros::delay(20);
-  //}
 }
