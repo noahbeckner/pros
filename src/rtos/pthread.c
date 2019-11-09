@@ -37,18 +37,16 @@
 #include "pros/llemu.h"
 //#include "system/system.h"
 
-
 #define RTOS_PTHREAD_STATE_EXITED       (1 << 1)
 #define RTOS_PTHREAD_STATE_RUN          (1 << 2)
 #define CURRENT_TASK NULL
 #define TASK_STACK_DEPTH_DEFAULT 0x2000
+#define TASK_STACK_DEPTH_MIN 0x200
 #define TASK_PRIORITY_DEFAULT 8
+#define TASK_PRIORITY_MAX 16
 
 struct rtos_pthread {
-  list_item_t list_item;
-  task_t  join_handle;
-  uint16_t state;
-  uint8_t detached;
+  list_item_t list_item; task_t  join_handle; uint16_t state; uint8_t detached;
   void *retval;
 };
 
@@ -67,8 +65,6 @@ static sem_t threads_mut = NULL;
 static static_sem_s_t threads_mut_buf;
 
 static List_t threads_list;
-
-// static int pthread_mutex_lock(rtos_pthread_mutex* mut, uint32_t tmo);
 
 void debug(int code, const char* msg) {
   lcd_print(code, msg);
@@ -123,6 +119,7 @@ static void rtos_pthread_delete(struct rtos_pthread* pthread) {
   kfree(pthread);
 }
 
+/********************Core Functions********************/
 void pthread_task_fn(void* _arg) {
   struct rtos_pthread_task_arg* arg = (struct rtos_pthread_task_arg*)_arg;
   void* rval = NULL;
@@ -141,6 +138,7 @@ int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
   if(attr) {
     return ENOSYS;
   }
+
   struct rtos_pthread_task_arg* task_arg = (struct rtos_pthread_task_arg*)kmalloc(sizeof(task_arg));
   if(task_arg == NULL) {
     return ENOMEM;
@@ -160,10 +158,18 @@ int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
   uint32_t stack_size = TASK_STACK_DEPTH_DEFAULT;
   uint32_t prio = TASK_PRIORITY_DEFAULT;
 
-  /*if(attr) {*/
-    /*stack_size = attr->stack_size; */
+  if(attr) {
+    stack_size = attr->stacksize; 
      
-  /*}*/
+    switch(attr->detachstate) {
+      case PTHREAD_CREATE_DETACHED:
+        pthread->detached = true;
+        break;
+      case PTHREAD_CREATE_JOINABLE:
+      default:
+        pthread->detached = false;
+    }
+  }
 
   task_t task = task_create(&pthread_task_fn, task_arg, prio, stack_size, "pthread");
   if(task == NULL) {
@@ -210,7 +216,6 @@ int pthread_join(pthread_t thread, void** retval) {
     ret = EAGAIN;
   }
   task_t task = rtos_pthread_find_handle(thread);
-  //TODO: Add detached condition?
   if(!task) {
     //task not found
     ret = ESRCH;
@@ -263,13 +268,11 @@ int pthread_join(pthread_t thread, void** retval) {
   }
 
   return ret;
-}
+} 
 
-int pthread_detach(pthread_t thread) {
-  printf("Detaching thread!\n");
-  struct rtos_pthread* pthread = (struct rtos_pthread*)thread;
+int pthread_detach(pthread_t thread) { 
+  struct rtos_pthread* pthread = (struct rtos_pthread*) &thread; 
   int ret = 0;
-
   if(sem_wait(threads_mut, portMAX_DELAY) != pdTRUE) {
     errno = ENOMSG;
     return EAGAIN;
@@ -292,7 +295,6 @@ int pthread_detach(pthread_t thread) {
   }
   else if(pthread->state == RTOS_PTHREAD_STATE_RUN) {
     //if thread is currently running
-    printf("Detached successfully\n");
     pthread->detached = true;
   }
   else {
@@ -356,7 +358,9 @@ void pthread_exit(void* ret_val) {
   }
   exit(1);
 }
+/*******************************************/
 
+/******************Utility******************/
 int phread_cancel(pthread_t pthread) {
   errno = ENOSYS;
   return ENOSYS;
@@ -383,17 +387,131 @@ int sched_yield() {
   task_delay(0);
   return 0;
 }
+/*******************************************/
 
-// int pthread_once(pthread_once_t* once_ctrl, void (*init_routine)(void)) {
-//   if(!once_ctrl || !init_routine || !once_ctrl->is_initialized) {
-//     errno = EINVAL;
-//     return EINVAL;
-//   }
-//
-//   rtos_sched_stop();
-//
-// }
+/******************Attributes******************/
+int pthread_attr_init(pthread_attr_t* attr) {
+  //Set suppported fields to default
+  if(attr) {
+    attr->stacksize = TASK_STACK_DEPTH_DEFAULT;
+    attr->detachstate = PTHREAD_CREATE_JOINABLE;    
+    return 0;
+  }
+  return EINVAL;
+}
 
+int pthread_attr_destroy(pthread_attr_t* attr) {
+  //Nothing to deallocate or destroy. Restore fiels to defaults
+  return pthread_attr_init(attr);
+}
+
+int pthread_attr_getstacksize(const pthread_attr_t* attr, size_t* stacksize) {
+  if(attr) {
+    *stacksize = attr->stacksize;
+    return 0;
+  }
+  return EINVAL;
+}
+
+int pthread_attr_setstacksize(pthread_attr_t* attr, size_t stacksize) {
+  if(attr && !(stacksize < TASK_STACK_DEPTH_MIN)) {
+    attr->stacksize = stacksize;
+    return 0;
+  }
+  return EINVAL;
+}
+
+int pthread_attr_getdetachstate(const pthread_attr_t* attr, int* detachstate) {
+  if(attr) {
+    *detachstate = attr->detachstate;
+    return 0;
+  }
+  return EINVAL;
+}
+
+int pthread_attr_setdetachstate(pthread_attr_t* attr, int detachstate) {
+  if(attr) {
+    switch(detachstate) {
+      case PTHREAD_CREATE_JOINABLE:
+        attr->detachstate = PTHREAD_CREATE_JOINABLE;
+        break;
+      case PTHREAD_CREATE_DETACHED:
+        attr->detachstate = PTHREAD_CREATE_DETACHED;
+        break;
+      default:
+        return EINVAL;
+    }
+    return 0;
+  }
+  return EINVAL;
+}
+/****************************************/
+
+/***************Scheduling**************/
+//Needs testing....
+int pthread_attr_getschedparam(const pthread_attr_t * attr, struct sched_param * param) {
+  int ret = 0;
+
+  if(!attr || !param) ret = EINVAL;
+  else {
+    param->sched_priority = (attr->schedparam).sched_priority;
+  }
+  return ret;
+}
+
+int pthread_attr_setschedparam(pthread_attr_t* attr, const struct sched_param* param) {
+  int ret = 0;
+  /* Check for NULL param. */
+  if(!attr || !param) {
+      ret = EINVAL;
+  }
+  else {
+    /* Ensure that param.sched_priority is valid. */
+    if((param->sched_priority > TASK_PRIORITY_MAX) || (param->sched_priority < 0)) {
+      ret = EINVAL;
+    }
+    else {
+      (attr->schedparam).sched_priority = param->sched_priority;
+    }
+  }
+  return ret;
+}
+
+//Stubbed out, because I don't know what to do with this
+int pthread_attr_setschedpolicy(pthread_attr_t * attr, int policy) {
+  /* Silence warnings about unused parameters. */
+  (void) attr;
+  (void) policy;
+
+  return 0;
+}
+
+int pthread_setschedparam(pthread_t thread, int policy, const struct sched_param* param) {
+  int ret = 0;
+  /* Silence compiler warnings about unused parameters. */
+  (void) policy;
+
+  task_t task = rtos_pthread_find_handle(thread);
+  /* Change the priority of the FreeRTOS task. */
+  task_set_priority(task, param->sched_priority);
+
+  return ret;
+}
+
+int pthread_getschedparam(pthread_t thread, int* policy, struct sched_param * param) {
+  int ret = 0;
+  /* Silence compiler warnings about unused parameters. */
+  (void) policy;
+
+  task_t task = rtos_pthread_find_handle(thread);
+  /* Change the priority of the FreeRTOS task. */
+  param->sched_priority = task_get_priority(task);
+  return ret;
+}
+
+/**************************************/
+
+/******************Mutex******************/
 static int mutexattr_check(const pthread_mutexattr_t *attr)
 {
     if (attr->type < PTHREAD_MUTEX_NORMAL || attr->type > PTHREAD_MUTEX_RECURSIVE) {
@@ -565,12 +683,4 @@ int pthread_mutexattr_settype(pthread_mutexattr_t *attr, int type)
     }
     return res;
 }
-
-
-int pthread_cond_wait(pthread_cond_t* a, pthread_mutex_t* b) {
-	return 0;
-}
-
-int pthread_cond_signal(pthread_cond_t* a) {
-	return 0;
-}
+/****************************************/
