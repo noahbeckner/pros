@@ -171,7 +171,11 @@ int pthread_create(pthread_t* thread, pthread_attr_t const * attr,
     }
   }
 
-  task_t task = task_create(&pthread_task_fn, task_arg, prio, stack_size, "pthread");
+  //this conversion is required because free_rtos tasks
+  //take in number of variables in words as an argument (eg, if stack_size = 100,
+  //then free_rtos allocates 400 bytes if the word size is 4 bytes)
+  uint32_t true_stacksize = stack_size / sizeof(void*);
+  task_t task = task_create(&pthread_task_fn, task_arg, prio, true_stacksize, "pthread");
   if(task == NULL) {
     kfree(pthread);
     kfree(task_arg);
